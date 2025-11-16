@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { useSession } from "next-auth/react";
 import { trpc } from "@/lib/trpc";
 import { sheetModules } from "@/data/sheet";
+import type { SheetModule } from "@/data/sheet";
 import {
   Table,
   TableBody,
@@ -15,22 +16,123 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import Link from "next/link";
 import { FileText, Download, Share2, Check } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Youtube } from "@/components/icons/icons";
 import { OpensoxProBadge } from "@/components/sheet/OpensoxProBadge";
 import { ProgressBar } from "@/components/sheet/ProgressBar";
-import { Badge } from "@/components/ui/badge";
+import { ActiveTag } from "@/components/ui/ActiveTag";
+import { useSubscription } from "@/hooks/useSubscription";
 
 const tableColumns = [
   "S.No",
   "Module Name",
   "Doc",
   "Watch",
-  "Live Sessions / Doubts",
+  "Live Sessions",
   "Done?",
-];
+] as const;
+
+const SheetTableRow = memo(function SheetTableRow({
+  module,
+  index,
+  isCompleted,
+  onCheckboxChange,
+  isPaidUser,
+}: {
+  module: SheetModule;
+  index: number;
+  isCompleted: boolean;
+  onCheckboxChange: (moduleId: string, checked: boolean) => void;
+  isPaidUser: boolean;
+}) {
+  const isComingSoon = module.comingSoon === true;
+
+  return (
+    <TableRow
+      className={`border-y border-ox-sidebar bg-ox-content hover:bg-ox-sidebar transition-colors ${
+        isComingSoon ? "opacity-50" : ""
+      }`}
+    >
+      <TableCell className="text-white text-[12px] sm:text-sm p-3 text-left">
+        {index}
+      </TableCell>
+
+      <TableCell className="text-white text-[12px] sm:text-sm p-3">
+        <div className="flex items-center gap-2">
+          <span className="max-w-[80px] md:max-w-none break-words">
+            {module.name}
+          </span>
+          {isComingSoon && (
+            <Badge className="bg-ox-purple/20 text-ox-purple border-ox-purple/30 text-[10px] px-2 py-0.5">
+              Soon
+            </Badge>
+          )}
+        </div>
+      </TableCell>
+
+      <TableCell className="text-center p-3">
+        {isComingSoon ? (
+          <span className="inline-flex items-center gap-1 text-gray-500 cursor-not-allowed pointer-events-none">
+            <FileText className="h-4 w-4" />
+            <span className="text-[12px] sm:text-sm font-medium">read</span>
+          </span>
+        ) : (
+          <Link
+            href={`/sheet/${module.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-white hover:text-ox-purple transition-colors"
+          >
+            <FileText className="h-4 w-4" />
+            <span className="text-[12px] sm:text-sm font-medium">read</span>
+          </Link>
+        )}
+      </TableCell>
+
+      <TableCell className="text-center p-3">
+        {isComingSoon ? (
+          <span className="inline-flex items-center justify-center opacity-50 cursor-not-allowed pointer-events-none">
+            <span className="w-5 h-5 inline-flex items-center justify-center [&_svg_path]:fill-gray-500">
+              <Youtube />
+            </span>
+          </span>
+        ) : (
+          <Link
+            href={module.videoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center hover:opacity-80 transition-opacity"
+          >
+            <span className="w-5 h-5 inline-flex items-center justify-center [&_svg_path]:fill-red-500">
+              <Youtube />
+            </span>
+          </Link>
+        )}
+      </TableCell>
+
+      <TableCell className="text-center p-3">
+        {isPaidUser ? <ActiveTag /> : <OpensoxProBadge />}
+      </TableCell>
+
+      <TableCell className="text-center p-3">
+        <div className="flex items-center justify-center">
+          <Checkbox
+            checked={isCompleted}
+            onCheckedChange={(checked) =>
+              onCheckboxChange(module.id, checked === true)
+            }
+            disabled={isComingSoon}
+            className="border-ox-purple/50 data-[state=checked]:bg-ox-purple data-[state=checked]:border-ox-purple data-[state=checked]:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+});
 
 export default function SheetPage() {
   const { data: session, status } = useSession();
+  const { isPaidUser } = useSubscription();
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const utils = trpc.useUtils();
@@ -55,6 +157,7 @@ export default function SheetPage() {
     getCompletedStepsProcedure.useQuery(undefined, {
       enabled: !!session?.user && status === "authenticated",
       refetchOnWindowFocus: false,
+      staleTime: 5 * 60 * 1000, // Cache for 5 minutes
     });
 
   const updateStepsMutation = updateCompletedStepsProcedure.useMutation({
@@ -97,26 +200,31 @@ export default function SheetPage() {
     }
   }, [fetchedSteps]);
 
-  const handleCheckboxChange = (moduleId: string, checked: boolean) => {
-    let newCompletedSteps: string[];
-    if (checked) {
-      newCompletedSteps = [...completedSteps, moduleId];
-    } else {
-      newCompletedSteps = completedSteps.filter((id) => id !== moduleId);
-    }
-    setCompletedSteps(newCompletedSteps);
-    updateStepsMutation.mutate({ completedSteps: newCompletedSteps });
-  };
+  const handleCheckboxChange = useCallback(
+    (moduleId: string, checked: boolean) => {
+      let newCompletedSteps: string[];
+      if (checked) {
+        newCompletedSteps = [...completedSteps, moduleId];
+      } else {
+        newCompletedSteps = completedSteps.filter((id) => id !== moduleId);
+      }
+      setCompletedSteps(newCompletedSteps);
+      updateStepsMutation.mutate({ completedSteps: newCompletedSteps });
+    },
+    [completedSteps, updateStepsMutation]
+  );
 
-  const handleDownloadPDF = () => {
-    // Create a printable version of the sheet
+  // Memoize computed values
+  const totalModules = useMemo(() => sheetModules.length, []);
+  const completedCount = useMemo(() => completedSteps.length, [completedSteps]);
+
+  // Memoize download handler
+  const handleDownloadPDF = useCallback(() => {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
-    const total = sheetModules.length;
-    const totalCompleted = completedSteps.length;
     const percentage =
-      total > 0 ? Math.round((totalCompleted / total) * 100) : 0;
+      totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -155,7 +263,7 @@ export default function SheetPage() {
         <body>
           <h1>30 days of Open Source sheet</h1>
           <div class="progress">
-            <p><strong>Total Progress:</strong> ${totalCompleted} / ${total} (${percentage}%)</p>
+            <p><strong>Total Progress:</strong> ${completedCount} / ${totalModules} (${percentage}%)</p>
           </div>
           <table>
             <thead>
@@ -191,9 +299,10 @@ export default function SheetPage() {
     setTimeout(() => {
       printWindow.print();
     }, 250);
-  };
+  }, [completedCount, totalModules, completedSteps]);
 
-  const handleShare = async () => {
+  // Memoize share handler
+  const handleShare = useCallback(async () => {
     const url = window.location.href;
     try {
       await navigator.clipboard.writeText(url);
@@ -202,9 +311,13 @@ export default function SheetPage() {
     } catch (clipboardErr) {
       console.error("Failed to copy:", clipboardErr);
     }
-  };
+  }, []);
 
-  if (status === "loading" || isLoadingSteps) {
+  // Show loading only if we're actually loading session OR steps
+  const isLoading =
+    (status === "loading" || isLoadingSteps) && !completedSteps.length;
+
+  if (isLoading) {
     return (
       <div className="w-full p-6 flex items-center justify-center h-[80vh]">
         <p className="text-ox-gray">Loading...</p>
@@ -212,22 +325,20 @@ export default function SheetPage() {
     );
   }
 
-  const totalModules = sheetModules.length;
-  const completedCount = completedSteps.length;
-
   return (
-    <div className="w-full h-full flex flex-col p-6 sm:p-6 overflow-hidden">
-      <div className="flex items-center justify-between pb-6 flex-shrink-0 flex-wrap gap-4">
-        <div className="flex items-center gap-3 flex-wrap">
+    <div className="w-full h-full flex flex-col p-2 sm:p-6 overflow-hidden">
+      <div className="w-[95vw] md:w-[90vw] lg:w-full flex items-start justify-between pb-6 flex-row lg:flex-shrink-0 lg:gap-4">
+        <div className="flex flex-col gap-2">
           <h2 className="text-xl sm:text-2xl md:text-3xl font-semibold text-white tracking-tight">
             30 days of Open Source sheet
           </h2>
           <span className="text-xs text-ox-white">
-            (i don&apos;t have a marketing budget, please share this sheet with
-            others 🙏 :)
+            (i don&apos;t have a marketing budget,
+            <br className="sm:hidden" /> please share this sheet with others 🙏
+            :)
           </span>
         </div>
-        <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="flex items-center md:gap-3 flex-shrink-0">
           {copied && (
             <Badge className="bg-ox-purple text-white border-0 flex items-center gap-1">
               <Check className="h-3 w-3" />
@@ -252,141 +363,64 @@ export default function SheetPage() {
           </button>
         </div>
       </div>
+      <div className="w-[96vw] lg:w-full flex-1 flex flex-col overflow-hidden">
+        {/* Progress Bar */}
+        <div className="mb-6 flex-shrink-0">
+          <ProgressBar completed={completedCount} total={totalModules} />
+        </div>
 
-      {/* Progress Bar */}
-      <div className="mb-6 flex-shrink-0">
-        <ProgressBar completed={completedCount} total={totalModules} />
-      </div>
+        <div className="mb-6 flex-shrink-0">
+          <p className="text-white text-sm italic">
+            &quot;sometimes, these modules may feel boring and hard af but
+            that&apos;s the cost of learning something worthy. you go through
+            it. you win. simple.&quot; — ajeet
+          </p>
+        </div>
 
-      <div className="mb-6 flex-shrink-0">
-        <p className="text-white text-sm italic">
-          &quot;sometimes, these modules may feel boring and hard af but
-          that&apos;s the cost of learning something worthy. you go through it.
-          you win. simple.&quot; — ajeet
-        </p>
-      </div>
-
-      <div
-        className="
+        <div
+          className="
           w-full bg-ox-content border border-ox-header rounded-lg
-          flex-1 overflow-y-auto overflow-x-auto relative
+          flex-1 overflow-auto relative
           [&::-webkit-scrollbar]:w-2
-          [&::-webkit-scrollbar]:h-1
+          [&::-webkit-scrollbar]:h-2
           [&::-webkit-scrollbar-track]:bg-transparent
           [&::-webkit-scrollbar-thumb]:bg-ox-purple/30
           [&::-webkit-scrollbar-thumb]:rounded-full
           [&::-webkit-scrollbar-thumb]:hover:bg-ox-purple/50
         "
-      >
-        <Table className="w-full min-w-[800px]">
-          <TableHeader>
-            <TableRow className="border-b border-ox-header bg-ox-header">
-              {tableColumns.map((name, i) => (
-                <TableHead
-                  key={name}
-                  className={[
-                    "px-3 py-3 font-semibold text-white text-[12px] sm:text-sm whitespace-nowrap",
-                    "sticky top-0 z-30 bg-ox-header",
-                    i === 0 ? "text-left" : "text-center",
-                  ].join(" ")}
-                >
-                  {name}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
+        >
+          <Table className="w-full min-w-[600px] sm:min-w-[800px]">
+            <TableHeader>
+              <TableRow className="border-b border-ox-header bg-ox-header">
+                {tableColumns.map((name, i) => (
+                  <TableHead
+                    key={name}
+                    className={[
+                      "px-3 py-3 font-semibold text-white text-[12px] sm:text-sm whitespace-nowrap",
+                      "sticky top-0 z-30 bg-ox-header",
+                      i === 0 ? "text-left" : "text-center",
+                    ].join(" ")}
+                  >
+                    {name}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
 
-          <TableBody>
-            {sheetModules.map((module, index) => {
-              const isCompleted = completedSteps.includes(module.id);
-              const isComingSoon = module.comingSoon === true;
-              return (
-                <TableRow
+            <TableBody>
+              {sheetModules.map((module, index) => (
+                <SheetTableRow
                   key={module.id}
-                  className={`border-y border-ox-sidebar bg-ox-content hover:bg-ox-sidebar transition-colors ${
-                    isComingSoon ? "opacity-50" : ""
-                  }`}
-                >
-                  <TableCell className="text-white text-[12px] sm:text-sm p-3 text-left">
-                    {index}
-                  </TableCell>
-
-                  <TableCell className="text-white text-[12px] sm:text-sm p-3">
-                    <div className="flex items-center gap-2">
-                      <span>{module.name}</span>
-                      {isComingSoon && (
-                        <Badge className="bg-ox-purple/20 text-ox-purple border-ox-purple/30 text-[10px] px-2 py-0.5">
-                          Coming Soon
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="text-center p-3">
-                    {isComingSoon ? (
-                      <span className="inline-flex items-center gap-1 text-gray-500 cursor-not-allowed pointer-events-none">
-                        <FileText className="h-4 w-4" />
-                        <span className="text-[12px] sm:text-sm font-medium">
-                          read
-                        </span>
-                      </span>
-                    ) : (
-                      <Link
-                        href={`/sheet/${module.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-white hover:text-ox-purple transition-colors"
-                      >
-                        <FileText className="h-4 w-4" />
-                        <span className="text-[12px] sm:text-sm font-medium">
-                          read
-                        </span>
-                      </Link>
-                    )}
-                  </TableCell>
-
-                  <TableCell className="text-center p-3">
-                    {isComingSoon ? (
-                      <span className="inline-flex items-center justify-center opacity-50 cursor-not-allowed pointer-events-none">
-                        <span className="w-5 h-5 inline-flex items-center justify-center [&_svg_path]:fill-gray-500">
-                          <Youtube />
-                        </span>
-                      </span>
-                    ) : (
-                      <Link
-                        href={module.videoUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center hover:opacity-80 transition-opacity"
-                      >
-                        <span className="w-5 h-5 inline-flex items-center justify-center [&_svg_path]:fill-red-500">
-                          <Youtube />
-                        </span>
-                      </Link>
-                    )}
-                  </TableCell>
-
-                  <TableCell className="text-center p-3">
-                    <OpensoxProBadge />
-                  </TableCell>
-
-                  <TableCell className="text-center p-3">
-                    <div className="flex items-center justify-center">
-                      <Checkbox
-                        checked={isCompleted}
-                        onCheckedChange={(checked) =>
-                          handleCheckboxChange(module.id, checked === true)
-                        }
-                        disabled={isComingSoon}
-                        className="border-ox-purple/50 data-[state=checked]:bg-ox-purple data-[state=checked]:border-ox-purple data-[state=checked]:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                      />
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+                  module={module}
+                  index={index}
+                  isCompleted={completedSteps.includes(module.id)}
+                  onCheckboxChange={handleCheckboxChange}
+                  isPaidUser={isPaidUser}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </div>
     </div>
   );
